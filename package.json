@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "express": "^4.18.2",
+    "google-protobuf": "^3.21.2",
+    "mongodb": "^5.7.0",
+    "node-schedule": "^2.1.1",
+    "protobufjs": "^7.2.4",
+    "request": "^2.88.2",
+    "uuid": "^9.0.0",
+    "ws": "^8.13.0"
+  }
+}
