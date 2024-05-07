@@ -32,26 +32,30 @@ console.log(AuthInfo["access_token"]);
 // console.log(RefreshToken);
 refreshToken();
 
-var trackingID = generateUUID();
-const connectionOptions = {
-  headers: {
-    'Authorization': AuthInfo["access_token"] ?? "",
-    'X-SessionId': trackingID,
-    'X-TrackingId': trackingID,
-    'ris-os-name': 'ios',
-    'ris-os-version': '16.5',
-    'ris-sdk-version': '2.91.1',
-    'X-Locale': 'en-US',
-    'User-Agent': 'MyCar/1.30.1 (com.daimler.ris.mercedesme.ece.ios; build:1819; iOS 16.5.0) Alamofire/5.4.0',
-  },
-};
+
 
 function connectWebSocket() {
-  ws = new WebSocket('wss://websocket.emea-prod.mobilesdk.mercedes-benz.com/ws', connectionOptions);
+
+  var trackingID = generateUUID();
+var connectionOptions = {
+  headers: Headers(),
+};
+
+//  add the authentification to the header of the websocket
+connectionOptions.headers["Authorization"] =  AuthInfo["access_token"];
+var SessionKeepAlive = setInterval(() => {
+  console.log("Sending keep alive");
+  ws.send("keep alive");
+}, 6600);
+
+
+  ws = new WebSocket('wss://websocket.emea-prod.mobilesdk.mercedes-benz.com/v2/ws', connectionOptions);
 
   // Event: WebSocket connection is established
   ws.on('open', () => {
     // startTimer();
+    // log the current time
+    console.log(Date.now());
     console.log('Connected to the WebSocket server');
 
     // Send a message to the server
@@ -74,16 +78,33 @@ function connectWebSocket() {
   ws.on('close', (code, reason) => {
     // conver the reason to a string from a buffer
     reason = reason.toString();
+    console.log(Date.now());
     console.log('Connection closed:', code, reason);
-    reconnectWebSocket();
+    refreshToken();
+    setTimeout(() => {
+      reconnectWebSocket();
+    }, 5000);
   });
 
   // Event: WebSocket connection encounters an error
   ws.on('error', (error) => {
+    console.log(Date.now());
     console.error('WebSocket error:', error);
-    reconnectWebSocket();
+    console.error(error.message);
+    console.error(error.code);
+    // if error is 403 then refresh the token, wait 5 seconds then reconnect
+    if (error.message == "Unexpected server response: 403") {
+      console.error("403 error");
+      refreshToken();
+      setTimeout(() => {
+        reconnectWebSocket();
+      }, 5000);
+    } else {
+      reconnectWebSocket();
+    }
   });
   ws.on('open', function open() {
+    console.log(Date.now());
     console.log('connected');
     // ws.send(Date.now());
   });
@@ -104,134 +125,68 @@ function dropAndReconnect() {
     connectWebSocket();
   }, 9000);
 }
-function ReconnectafterTime() {
-  // start the timer
-  setTimeout(() => {
-    dropAndReconnect();
-    ReconnectafterTime();
-  }, 7200000);
-
-}
-
-ReconnectafterTime();
 
 
-function reconnectWebSocket() {
-  console.log('Reconnecting WebSocket...');
-
-  ws.removeAllListeners(); // Remove all existing event listeners
-  refreshToken();
-  // Reconnect after a delay (e.g., 5 seconds)
-  setTimeout(() => {
-    connectWebSocket();
-  }, 95000);
-
-  // setTimeout(() => {
-
-  //   connectWebSocket();
-  //   // kill the process 
-  //   // process.exit(1);
-  // }, 25000);
-}
-
-function startTimer() {
-  clearTimeout(timerId); // Clear the previous timer, if any
-  timerId = setTimeout(() => {
-    console.log('Timer finished!');
-    refreshToken();
-    // wait 2 seconds before reconnecting
-    setTimeout(() => {
-      reconnectWebSocket(); // Reconnect the WebSocket after the timer finishes
-    }, 2000);
-  }, 120000); // 120 seconds =  2 minutes
-}
 
 function processData(data, isBinary) {
-  // check if the message is binary
+  // Convert data based on type
   data = isBinary ? data : data.toString();
-  // console.log('Received message:', data);
+
   try {
     const message = VehicleEvents.PushMessage.deserializeBinary(data).toObject();
-    if (message.debugmessage) {
-      //   this.log.debug(JSON.stringify(message.debugmessage));
-      console.log(JSON.stringify(message.debugmessage));
-    }
-    else if (message.apptwinCommandStatusUpdatesByVin) {
-      console.log(JSON.stringify(message.apptwinCommandStatusUpdatesByVin));
-
-      const ackCommand = new Client.AcknowledgeAppTwinCommandStatusUpdatesByVIN();
-      ackCommand.setSequenceNumber(message.apptwinCommandStatusUpdatesByVin.sequenceNumber);
-      const clientMessage = new Client.ClientMessage();
-      clientMessage.setAcknowledgeApptwinCommandStatusUpdateByVin(ackCommand);
-      ws.send(clientMessage.serializeBinary());
-      if (message.apptwinCommandStatusUpdatesByVin.updatesByVinMap[0][0]) {
-        console.log("Received State Updated" + JSON.stringify(message.apptwinCommandStatusUpdatesByVin.updatesByVinMap[0]));
-        const Vin = message.apptwinCommandStatusUpdatesByVin.updatesByVinMap[0][0];
-        var commandStatus = message.apptwinCommandStatusUpdatesByVin.updatesByVinMap[0][1];
-        commandStatus.updatesByPidMap[0] = commandStatus.updatesByPidMap[0][1];
-
-        if (StateChangedBasedonRequestByVin[Vin]) {
-          console.log("State Updated" + JSON.stringify(commandStatus));
-          StateChangedBasedonRequestByVin[Vin]["Response"] = commandStatus;
-        }
-      }
-
-      console.log(clientMessage);
-      // StateChangedBasedonRequestByVin
-    }
-
-    else if (message.assignedVehicles) {
-      // this.log.debug(JSON.stringify(message.assignedVehicles));
-      console.log(JSON.stringify(message.assignedVehicles));
-      vinArray = message.assignedVehicles.vinsList;
-      const ackCommand = new Client.AcknowledgeAssignedVehicles();
-      const clientMessage = new Client.ClientMessage();
-      clientMessage.setAcknowledgeAssignedVehicles(ackCommand);
-      ws.send(clientMessage.serializeBinary());
-    }
-
-    else if (message.apptwinPendingCommandRequest) {
-      // this.log.silly("apptwinPendingCommandRequest: " + JSON.stringify(message.apptwinPendingCommandRequest));
-      console.log("apptwinPendingCommandRequest: " + JSON.stringify(message.apptwinPendingCommandRequest));
-    }
-    else if (message.vepupdates) {
-      if (!Array.isArray(message.vepupdates)) {
-        console.log('rawData is not an array');
-      }
-      let array = message.vepupdates["updatesMap"];
-      //   this.log.silly(JSON.stringify(message.vepupdates));
-      //   this.log.debug("Received State Updated");
-      // console.log(JSON.stringify(message.vepupdates));
-      // console.log("Received State Updated");
-      // console.log(JSON.stringify(array));
-      updateCarStatesByVin(array);
-      // console.log("CarStatesByVin");
-      // console.log(JSON.stringify(CarStatesByVin));
-    } else {
-      // this.log.debug("Received unknown message");
-      // this.log.debug(JSON.stringify(messag
-      console.log("Received unknown message");
-      console.log(JSON.stringify(message));
-    }
-
-
+    handleReceivedMessage(message);
   } catch (error) {
-    console.log(error);
-    // this.log.error("Websocket parse error");
-    // this.log.error(error);
-    // this.log.error(data);
-    console.log("Websocket parse error");
-    // this.ws.close();
-    // setTimeout(() => {
-    // //   this.connectWS();
-    // }, 5000);
+    console.error("Websocket parse error", error);
+    // Optional: Close and reconnect websocket, handle error as needed
+    // handleWebSocketError(ws);
   }
-  // Process the received data
+}
 
-  // Reset the timer after receiving a message
-  // startTimer();
+function handleReceivedMessage(message) {
+  if (message.debugmessage) {
+    logDebugMessage(message.debugmessage);
+  } else if (message.apptwinCommandStatusUpdatesByVin) {
+    handleAppTwinUpdates(message.apptwinCommandStatusUpdatesByVin);
+  } else if (message.assignedVehicles) {
+    handleAssignedVehicles(message.assignedVehicles);
+  } else if (message.apptwinPendingCommandRequest) {
+    console.log("apptwinPendingCommandRequest:", JSON.stringify(message.apptwinPendingCommandRequest));
+  } else if (message.vepupdates) {
+    handleVepUpdates(message.vepupdates);
+  } else {
+    console.log("Received unknown message", JSON.stringify(message));
+  }
+}
 
-  // Rest of your code for processing the data...
+function logDebugMessage(debugMessage) {
+  console.log(JSON.stringify(debugMessage));
+}
+
+function handleAppTwinUpdates(updates) {
+  console.log(JSON.stringify(updates));
+  acknowledgeUpdates(updates, 'AppTwinCommandStatusUpdatesByVIN');
+  // Additional logic specific to AppTwin updates...
+}
+
+function handleAssignedVehicles(vehicles) {
+  console.log(JSON.stringify(vehicles));
+  acknowledgeUpdates(vehicles, 'AssignedVehicles');
+  // Additional logic for handling assigned vehicles...
+}
+
+function acknowledgeUpdates(updates, type) {
+  const ackCommand = new Client['Acknowledge' + type]();
+  const clientMessage = new Client.ClientMessage();
+  clientMessage['setAcknowledge' + type](ackCommand);
+  ws.send(clientMessage.serializeBinary());
+}
+
+function handleVepUpdates(vepupdates) {
+  if (!Array.isArray(vepupdates.updatesMap)) {
+    console.log('rawData is not an array');
+    return;
+  }
+  updateCarStatesByVin(vepupdates.updatesMap);
 }
 
 
@@ -256,10 +211,6 @@ function updateCarStatesByVin(rawData) {
       });
     }
   }
-  // loop though the cars and then the states and if any have the key changed set to true then send the state to the post url
-
-
-
 
 }
 
@@ -287,7 +238,6 @@ function PostChanges(CarID, Key, Value, OldValue) {
   // make post request
   // create json 
   SendPost(CarID, Key, Value);
-
 }
 
 function SendPost(CarID, Key, Value) {
@@ -329,20 +279,9 @@ function CarValueChanged(oldValue, newValue) {
   if (newValue["changed"] == false) {
     return false;
   }
-  //remove hte timestamp and timestampInMs from the object
-  // delete oldValue["timestamp"];
-  // delete oldValue["timestampInMs"];
-  // delete oldValue["changed"];
-  // delete newValue["timestamp"];
-  // delete newValue["timestampInMs"];
-  // delete newValue["changed"];
 
   $keysToIgnore = ["timestamp", "timestampInMs", "changed", "serviceIdsList"];
-  // compare the objects
-  //log out both objects
-  // console.log(JSON.stringify(oldValue));
-  // console.log(JSON.stringify(newValue));
-  // loop thought the keys in the new value to compare them
+
   for (const key in newValue) {
     // if the key is in the ignore list then skip it
     if ($keysToIgnore.includes(key)) {
@@ -351,13 +290,9 @@ function CarValueChanged(oldValue, newValue) {
 
     // check if the key is in the old value
     if (key in oldValue) {
-      // check if the values are the same
       if (oldValue[key] != newValue[key]) {
-        // the values are not the same
         console.log("value changed");
         console.log(key);
-        // console.log(JSON.stringify(oldValue));
-        // console.log(JSON.stringify(newValue));
         return true;
       }
     } else {
@@ -373,23 +308,9 @@ function CarValueChanged(oldValue, newValue) {
 
 function refreshToken() {
   console.log("refresh token");
+  var headers = Headers();
+  headers["Content-Type"] = "application/x-www-form-urlencoded";
 
-  const headers = {
-    "RIS-OS-Version": "14.8",
-    "X-TrackingId": generateUUID(),
-    "RIS-OS-Name": "ios",
-    "X-SessionId": generateUUID(),
-    "Accept": "*/*",
-    "X-ApplicationName": "mycar-store-ece",
-    "Accept-Language": "de-DE;q=1.0",
-    "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-    "X-Request-Id": generateUUID(),
-    "RIS-SDK-Version": "9.99.0",
-    "User-Agent": "MyCar/1.27.0 (com.daimler.ris.mercedesme.ece.ios; build:1719; iOS 14.8.0) Alamofire/5.4.0",
-    "ris-application-version": "1.27.0 (1719)",
-    "device-uuid": generateUUID(),
-    "X-Locale": "en-US",
-  };
   request.post(
     {
       gzip: true,
@@ -569,20 +490,14 @@ app.post('/Car/:CarID/:command/:second?', (req, res) => {
     vc.setPin(Pin);
   }
 
-  // if (vc.setDoorsList) {
-  //   // the second param is the door list in json format
+  if (ws.readyState == 3) {
+    // dropAndReconnect();
+  }
 
-  //   vc.addDoors(proto.proto.Door.FRONT_LEFT);
-  // }
-  // if (vc.addTemperaturePoints) {
-  //   // Create a new TemperaturePoint instance
-  //   const temperaturePoint = new proto.proto.TemperatureConfigure.TemperaturePoint();
-  //   temperaturePoint.setZone(1);
-  //   temperaturePoint.setTemperatureInCelsius(25);
 
-  //   // Add the temperature point to the TemperatureConfigure message
-  //   vc.addTemperaturePoints(temperaturePoint);
-  // }
+
+
+
 
   command["set" + Action](vc);
 
@@ -700,26 +615,11 @@ app.get('/token', (req, res) => {
 //  update login info
 app.post('/Login/:username', (req, res) => {
   let username = req.params.username;
-
+  var randomUUID = generateUUID();
   var options = {
     'method': 'POST',
     'url': 'https://bff.emea-prod.mobilesdk.mercedes-benz.com/v1/login',
-    'headers': {
-      'Host': 'bff.emea-prod.mobilesdk.mercedes-benz.com',
-      'ris-os-version': '17.2',
-      'X-TrackingId': '8F47B7B7-2C60-477A-B912-5B1B6DA9A756',
-      'ris-os-name': 'ios',
-      'X-SessionId': '05D8EF80-63E3-4DD8-945C-20B0EA13F58B',
-      'Accept': '*/*',
-      'X-ApplicationName': 'mycar-store-ece',
-      'Accept-Language': 'en-GB;q=1.0, fr-FR;q=0.9',
-      'ris-sdk-version': '2.107.0',
-      'User-Agent': 'MyCar/1.38.0 (com.daimler.ris.mercedesme.ece.ios; build:2035; iOS 17.2.0) Alamofire/5.4.0',
-      'ris-application-version': '1.38.0 (2035)',
-      'Connection': 'keep-alive',
-      'X-Locale': 'en-US',
-      'Content-Type': 'application/json'
-    },
+    'headers': Headers(),
     body: JSON.stringify({
       "emailOrPhoneNumber": username,
       "nonce": "t",
@@ -743,26 +643,7 @@ app.post('/Login_Code/:username/:code', (req, res) => {
   var options = {
     'method': 'POST',
     'url': 'https://id.mercedes-benz.com/as/token.oauth2',
-    'headers': {
-      'Host': 'id.mercedes-benz.com',
-      'X-SessionId': '05D8EF80-63E3-4DD8-945C-20B0EA13F58B',
-      'User-Agent': 'MyCar/1.38.0 (com.daimler.ris.mercedesme.ece.ios; build:2035; iOS 17.2.0) Alamofire/5.4.0',
-      'device-uuid': randomUUID,
-      'RIS-OS-Version': '17.2',
-      'ris-application-version': '1.38.0 (2035)',
-      'X-Device-Id': randomUUID,
-      'X-TrackingId': randomUUID,
-      'Stage': 'prod',
-      'RIS-SDK-Version': '2.107.0',
-      'Connection': 'keep-alive',
-      'X-ApplicationName': 'mycar-store-ece',
-      'RIS-OS-Name': 'ios',
-      'X-Locale': 'en-US',
-      'Accept-Language': 'en-GB;q=1.0, fr-FR;q=0.9',
-      'X-Request-Id': randomUUID,
-      'Accept': '*/*',
-      'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
-    },
+    'headers': Headers(),
     body: 'client_id=01398c1c-dc45-4b42-882b-9f5ba9f175f1&grant_type=password&password=t%3A' + RequestCode + '&scope=openid%20email%20phone%20profile%20offline_access%20ciam-uid&username=' + username
 
   };
@@ -795,3 +676,48 @@ app.post('/Login_Code/:username/:code', (req, res) => {
   });
 
 });
+app.get('/drop', (req, res) => {
+  // drop the websocket connection
+  dropAndReconnect();
+  res.send("Dropped");
+  res.end();
+}
+);
+
+function  Headers() {
+//   X-Sessionid:{{$guid}}
+// Ris-Os-Name:ios
+// Ris-Os-Version:17.4.1
+// Ris-Sdk-Version:2.114.0
+// X-Locale:en-GB
+// X-Trackingid:{{$guid}}
+// User-Agent:MyCar/2168 CFNetwork/1494.0.7 Darwin/23.4.0
+// Content-Type:application/json
+// Accept-Language:en-GB
+// X-Applicationname:mycar-store-ece
+// Ris-Application-Version:1.42.0 (2168)
+const TrackingId = generateUUID();
+const SessionId = generateUUID();
+
+const headers = {
+  'Host': 'id.mercedes-benz.com',
+  'ris-os-version': '17.4.1',
+  'X-TrackingId':TrackingId,
+  'ris-os-name': 'ios',
+  'X-SessionId': SessionId,
+  'Accept': '*/*',
+  'X-ApplicationName': 'mycar-store-ece',
+  'Accept-Language': 'en-GB;q=1.0, fr-FR;q=0.9',
+  'ris-sdk-version': '2.107.0',
+  'User-Agent': 'MyCar/1.38.0 (com.daimler.ris.mercedesme.ece.ios; build:2035; iOS 17.2.0) Alamofire/5.4.0',
+  'ris-application-version': '1.38.0 (2035)',
+  'Connection': 'keep-alive',
+  'X-Locale': 'en-US',
+  'Content-Type': 'application/json',
+  "Stage": "prod",
+  "X-Device-Id" :generateUUID(),
+  "X-Request-Id": generateUUID(),
+};
+return headers;
+  
+}
